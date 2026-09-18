@@ -245,24 +245,35 @@ module.exports = { generateUniqueCode };
 
 ## Validation (Joi)
 
-All body validation uses Joi. Schemas live in `links.validation.js`. The `validate.js` middleware
-factory applies them before controllers run.
+Joi schemas live in `src/utils/validators/link-validators.js`. Middleware arrays that apply them
+live in `src/app/middlewares/links-middlewares.js`. The `handleBadRequests(schema, target)` helper
+from `exception-handler.js` wraps `schema.validate()` and calls `next(new UnprocessableEntity(...))`
+on failure. Controllers never validate manually.
 
 ```js
-// src/middleware/validate.js
-const { UnprocessableEntity } = require('../utils/exceptions/custom-exceptions');
+// src/utils/exceptions/exception-handler.js — handleBadRequests helper (Joi edition)
+const { UnprocessableEntity } = require('./custom-exceptions');
 
-const validate = (schema, target = 'body') => (req, res, next) => {
+const handleBadRequests = (schema, target = 'body') => (req, res, next) => {
     const { error, value } = schema.validate(req[target], { abortEarly: false, stripUnknown: true });
     if (error) {
         const errors = error.details.map(d => ({ field: d.path.join('.'), message: d.message }));
-        return next(new UnprocessableEntity('Validation failed', errors));
+        return next(new UnprocessableEntity('Validation failed.', errors));
     }
-    req[target] = value; // replace with cleaned, coerced values
+    req[target] = value; // replace with coerced, stripped values
     next();
 };
+```
 
-module.exports = validate;
+```js
+// src/app/middlewares/links-middlewares.js — example middleware arrays
+const { createLinkSchema, updateLinkSchema, listLinksQuery } = require('../../utils/validators/link-validators');
+const { handleBadRequests } = require('../../utils/exceptions/exception-handler');
+const rateLimiter = require('./rate-limiter');
+
+const createLinkMiddlewares = [handleBadRequests(createLinkSchema), rateLimiter];
+const updateLinkMiddlewares = [handleBadRequests(updateLinkSchema)];
+const listLinksMiddlewares  = [handleBadRequests(listLinksQuery, 'query')];
 ```
 
 ### POST /api/v1/links Schema
@@ -302,12 +313,13 @@ module.exports = validate;
 ## Sequelize Models
 
 Models use `sequelize.define(...)` directly — **not** the class/factory pattern.
+Model files are lowercase kebab-case: `link.js`, `click.js`.
 
-### Link.js
+### link.js
 
 ```js
 const { DataTypes } = require('sequelize');
-const sequelize = require('../configs/database');
+const sequelize = require('../configs/sequelize');
 
 const Link = sequelize.define('Link', {
     id:           { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
