@@ -341,11 +341,11 @@ const Link = sequelize.define('Link', {
 module.exports = { Link };
 ```
 
-### Click.js
+### click.js
 
 ```js
 const { DataTypes } = require('sequelize');
-const sequelize = require('../configs/database');
+const sequelize = require('../configs/sequelize');
 
 const Click = sequelize.define('Click', {
     id:         { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
@@ -479,7 +479,8 @@ All JSON responses — success and error — use this exact shape from `src/util
 ## Custom Exceptions
 
 `src/utils/exceptions/custom-exceptions.js` — extend `AppError` for each case. When adding a new
-exception class, add the matching `instanceof` branch to `src/middleware/errorHandler.js`.
+exception class, add the matching `instanceof` branch to `exceptionHandler` in
+`src/utils/exceptions/exception-handler.js`.
 
 | Class | Status | When to throw |
 | --- | --- | --- |
@@ -528,7 +529,7 @@ module.exports = logger;
 
 ## Rate Limiting
 
-`src/middleware/rateLimiter.js` — applied only to `POST /api/v1/links`.
+`src/app/middlewares/rate-limiter.js` — applied only to `POST /api/v1/links` via `links-middlewares.js`.
 
 ```js
 const rateLimit = require('express-rate-limit');
@@ -584,8 +585,9 @@ This is the core fire-and-forget pattern. After calling `res.redirect()`, analyt
 the background without blocking the response:
 
 ```js
-// In redirect.service.js
-const redirect = async (req, res, next, code) => {
+// In redirect-controller.js
+const redirect = async (req, res, next) => {
+    const { code } = req.params;
     // ... cache lookup, expiry check ...
 
     res.setHeader('Cache-Control', 'no-store');
@@ -593,7 +595,7 @@ const redirect = async (req, res, next, code) => {
 
     // Fire-and-forget — do NOT await
     setImmediate(() => {
-        Click.create({
+        clickRepository.create({
             linkId: link.id,
             clickedAt: new Date(),
             ipAddress: req.ip || null,
@@ -601,7 +603,7 @@ const redirect = async (req, res, next, code) => {
             referrer: req.headers['referer'] || null,
         }).catch(err => logger.error({ linkId: link.id, error: err.message }, 'Async click write failed'));
 
-        Link.increment('clickCount', { where: { id: link.id } })
+        linkRepository.incrementClickCount(link.id)
             .catch(err => logger.error({ linkId: link.id, error: err.message }, 'Async click_count increment failed'));
     });
 };
@@ -632,7 +634,7 @@ src/tests/
   teardown.js                      # globalTeardown — drops test DB
   setupFilesAfterEnv.js            # afterAll — closes Sequelize + Redis connections
   unit/
-    codeGenerator.test.js
+    code-generator.test.js
   integration/
     links.test.js                  # POST, GET, PATCH, DELETE /api/v1/links
     redirect.test.js               # GET /:code — cache hit/miss, expiry, deletion
@@ -655,30 +657,30 @@ await execPromise('NODE_ENV=test npx sequelize-cli db:migrate');
 Closes the Sequelize connection and the ioredis client after each test file. Failing to close the
 Redis connection causes Jest to hang after the test suite completes.
 
-### Unit Test Pattern — `codeGenerator.test.js`
+### Unit Test Pattern — `code-generator.test.js`
 
 ```js
-jest.mock('../models/Link');
-const { Link } = require('../models/Link');
-const { generateUniqueCode } = require('../utils/codeGenerator');
+jest.mock('../repositories/link-repository');
+const linkRepository = require('../repositories/link-repository');
+const { generateUniqueCode } = require('../utils/code-generator');
 
 describe('generateUniqueCode', () => {
     it('returns a code when no collision', async () => {
-        Link.findOne.mockResolvedValue(null);
+        linkRepository.findByCode.mockResolvedValue(null);
         const code = await generateUniqueCode();
         expect(code).toHaveLength(7);
     });
 
     it('retries on collision and returns a different code', async () => {
-        Link.findOne
+        linkRepository.findByCode
             .mockResolvedValueOnce({ code: 'abc1234' }) // collision
             .mockResolvedValue(null);                   // clear on second attempt
         const code = await generateUniqueCode();
-        expect(Link.findOne).toHaveBeenCalledTimes(2);
+        expect(linkRepository.findByCode).toHaveBeenCalledTimes(2);
     });
 
     it('throws after max retries all collide', async () => {
-        Link.findOne.mockResolvedValue({ code: 'anything' });
+        linkRepository.findByCode.mockResolvedValue({ code: 'anything' });
         await expect(generateUniqueCode()).rejects.toThrow('Failed to generate');
     });
 });
@@ -806,12 +808,17 @@ curl -X POST http://localhost:3000/api/v1/links \
 - Write to Redis at link creation time — the cache is populated on the *first redirect*, not at
   creation.
 - `await` analytics writes (click event, `click_count` increment) inside the redirect response path
-  — they must be fire-and-forget.
+  — they must be fire-and-forget (`setImmediate`).
 - Read `process.env` directly in any file other than `src/configs/env.js`.
-- Call `redis.get/set/del` outside of `src/utils/cacheService.js`.
-- Call `nanoid` outside of `src/utils/codeGenerator.js`.
-- Put business logic (DB queries, cache calls, code generation) in controller files.
-- Use `express-validator` — use `joi` and the `validate.js` middleware factory.
+- Call `redis.get/set/del` outside of `src/utils/cache-service.js`.
+- Call `nanoid` outside of `src/utils/code-generator.js`.
+- Import or query a Sequelize model directly from a controller, middleware, or utility — all DB
+  access goes through `src/repositories/`.
+- Destructure functions from a repository import — always call through the namespace object
+  (e.g. `linkRepository.findByCode(code)`, not `const { findByCode } = require(...)`).
+- Call a serializer from anywhere other than a controller — `link-serializer.js` is a controller
+  concern only.
+- Use `express-validator` — use `joi` via `handleBadRequests` in `links-middlewares.js`.
 - Use `pino` — use `winston` via `src/utils/logger.js`.
 - Use `console.log` in any production code path.
 - Return HTML for error responses on `GET /:code` — always return JSON.
