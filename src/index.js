@@ -1,8 +1,7 @@
 require('dotenv').config();
 require('./configs/sequelize');
 const express = require('express');
-const config = require('./configs/config');
-const logger = require('pino')({ level: config.app.LOG_LEVEL });
+const logger = require('./configs/logger');
 const { exceptionHandler } = require('./utils/exceptions/exception-handler');
 
 const app = express();
@@ -15,7 +14,7 @@ app.use(exceptionHandler);
 
 if (require.main === module) {
     app.listen(PORT, () => {
-        logger.info({ port: PORT }, 'URL Shortener started');
+        logger.info('URL Shortener started', { port: PORT });
     });
 }
 
