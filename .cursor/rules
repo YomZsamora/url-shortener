@@ -31,47 +31,49 @@ No auth, no sessions, no JWT. All links are anonymous in v1.
 
 ```
 src/
-  index.js               # Entry point — middleware, route registration, server start
+  index.js                   # Entry point — middleware, route registration, server start
+  app/
+    controllers/
+      links-controller.js    # Create, list, get, update, soft-delete link operations
+      redirect-controller.js # GET /:code — cache-aside + fire-and-forget analytics
+      stats-controller.js    # Per-link and system-wide analytics aggregation
+    middlewares/
+      links-middlewares.js   # Middleware arrays for each links route (validate + rateLimiter)
+      rate-limiter.js        # express-rate-limit + rate-limit-redis (POST /api/v1/links only)
+    routes/
+      links-routes.js
+      redirect-routes.js
+      stats-routes.js
   configs/
-    config.js            # Sequelize dialect configs + app config object
-    env.js               # Validated env vars — single source of process.env truth
-    database.js          # Sequelize instance
-    redis.js             # ioredis client with reconnect handling
-  middleware/
-    validate.js          # Joi validation middleware factory
-    rateLimiter.js       # express-rate-limit + rate-limit-redis (POST /api/v1/links only)
-    errorHandler.js      # Global Express error handler (registered last in index.js)
-  modules/
-    links/
-      links.routes.js
-      links.controller.js
-      links.service.js
-      links.validation.js  # Joi schemas for POST and PATCH
-    redirect/
-      redirect.routes.js
-      redirect.controller.js
-      redirect.service.js  # Cache-aside logic + async click write
-    stats/
-      stats.routes.js
-      stats.controller.js
+    config.js                # Sequelize dialect configs + app config object
+    env.js                   # Validated env vars — single source of process.env truth
+    sequelize.js             # Sequelize instance
+    redis.js                 # ioredis client with reconnect handling
   models/
-    Link.js
-    Click.js
+    link.js                  # sequelize.define(...) — lowercase kebab-case
+    click.js
   migrations/
+  repositories/
+    link-repository.js       # All Link model queries — called via namespace import
+    click-repository.js      # All Click model queries — called via namespace import
   utils/
-    codeGenerator.js     # nanoid + collision check + retry loop
-    cacheService.js      # Redis wrappers: getLink, setLink, deleteLink
-    response.js          # Builds { code, status, message, data }
-    logger.js            # Shared winston logger instance
+    code-generator.js        # nanoid + collision check via linkRepository + retry loop
+    cache-service.js         # Redis wrappers: getLink, setLink, deleteLink
+    responses.js             # ApiResponse class — builds { code, status, message, data }
+    logger.js                # Shared winston logger instance
     exceptions/
-      custom-exceptions.js
-      exception-handler.js  # DEPRECATED — keep file, move logic to middleware/errorHandler.js
+      custom-exceptions.js   # AppError subclasses
+      exception-handler.js   # exceptionHandler (global) + handleBadRequests (Joi adapter)
+    serializers/
+      link-serializer.js     # serializeLink, serializeLinkList — called only from controllers
+    validators/
+      link-validators.js     # Joi schemas: createLinkSchema, updateLinkSchema, listLinksQuery
   tests/
     setup.js
     teardown.js
     setupFilesAfterEnv.js
     unit/
-      codeGenerator.test.js
+      code-generator.test.js
     integration/
       links.test.js
       redirect.test.js
@@ -79,7 +81,8 @@ src/
       health.test.js
 ```
 
-> The project uses `src/configs/` (plural). Do not rename it to `src/config/`.
+> `src/configs/` uses plural (existing boilerplate). Do not rename to `src/config/`.
+> `configs/sequelize.js` keeps its existing name (not `database.js`).
 
 ---
 
@@ -94,28 +97,39 @@ src/
 3. **Async analytics after redirect.** Click events and `click_count` increments are fire-and-forget.
    Use `setImmediate(() => { ... })`. Never `await` these. Log errors but never propagate them.
 
-4. **`cacheService.js` owns all Redis calls.** `getLink(code)`, `setLink(code, data)`,
+4. **`cache-service.js` owns all Redis calls.** `getLink(code)`, `setLink(code, data)`,
    `deleteLink(code)` are the only functions that use the ioredis client directly. Nothing else calls
    `redis.get/set/del`.
 
-5. **`codeGenerator.js` has no Express dependency.** It generates a nanoid code, checks the DB for
-   collision, retries up to `CODE_MAX_RETRIES`. Unit-testable in isolation.
+5. **`code-generator.js` has no Express dependency.** It uses `linkRepository` for collision checks,
+   generates a nanoid code, and retries up to `CODE_MAX_RETRIES`. Unit-testable with a mocked
+   repository.
 
-6. **Thin controllers.** Controllers: validate → call service → `res.json()`. No DB queries,
-   no cache calls, no nanoid in controllers.
+6. **Repositories own data access.** No controller queries a Sequelize model directly. All DB reads
+   and writes go through `src/repositories/link-repository.js` or `click-repository.js`. Always
+   import via namespace — never destructure (`linkRepository.findByCode(...)`, not
+   `const { findByCode } = require(...)`).
 
-7. **Validation middleware only.** Joi schemas live in `links.validation.js`. The `validate.js`
-   factory applies them. Controllers never validate manually.
+7. **Thin controllers.** Controllers call repositories and utilities, then serialize and respond.
+   No raw Sequelize queries, no direct ioredis calls, no nanoid in controllers.
 
-8. **`errorHandler.js` is last.** Registered as the final middleware in `src/index.js`. Controllers
-   call `next(error)` — never `res.json()` error payloads directly.
+8. **Validation via middleware arrays.** Joi schemas in `utils/validators/link-validators.js`.
+   `handleBadRequests(schema)` from `exception-handler.js` applies them. Middleware arrays assembled
+   in `app/middlewares/links-middlewares.js`. Controllers never validate manually.
 
-9. **`env.js` is the only file that reads `process.env`.** All other files import from `env.js`.
+9. **Serializers called only from controllers.** `link-serializer.js` is a controller concern.
+   Never call it from a repository or middleware.
 
-10. **Soft deletes.** `DELETE` sets `deleted_at`. List queries and redirect lookup filter
+10. **`exceptionHandler` is last.** Registered as the final middleware in `src/index.js`. Controllers
+    call `next(error)` — never `res.json()` error payloads directly. New exception class → add
+    matching `instanceof` branch in `exceptionHandler`.
+
+11. **`env.js` is the only file that reads `process.env`.** All other files import from `env.js`.
+
+12. **Soft deletes.** `DELETE` sets `deleted_at`. List queries and redirect lookup filter
     `deleted_at IS NULL`.
 
-11. **Route order matters.** Register routes: `/health` → `/api/v1/` → `/:code` (last). The
+13. **Route order matters.** Register routes: `/health` → `/api/v1/` → `/:code` (last). The
     wildcard `/:code` must never be registered before `/health` or `/api/*`.
 
 ---
@@ -193,17 +207,18 @@ expired link returns 410 even if its Redis entry is still live.
 
 ---
 
-## Models — use `sequelize.define(...)`, not class pattern
+## Models — use `sequelize.define(...)`, not class pattern. Files are lowercase kebab-case.
 
-**Link fields:** `id` (UUID PK), `code` (VARCHAR 20, UNIQUE), `originalUrl` (TEXT), `redirectType`
+**link.js fields:** `id` (UUID PK), `code` (VARCHAR 20, UNIQUE), `originalUrl` (TEXT), `redirectType`
 (SMALLINT, default 302), `clickCount` (BIGINT, default 0), `expiresAt` (DATE, nullable),
-`deletedAt` (DATE, nullable), `createdAt`, `updatedAt`.
+`deletedAt` (DATE, nullable), `createdAt`, `updatedAt`. Import sequelize from `configs/sequelize`.
 
-**Click fields:** `id` (UUID PK), `linkId` (UUID FK → links.id), `clickedAt` (DATE), `ipAddress`
+**click.js fields:** `id` (UUID PK), `linkId` (UUID FK → links.id), `clickedAt` (DATE), `ipAddress`
 (INET, nullable), `userAgent` (TEXT, nullable), `referrer` (TEXT, nullable). No Sequelize timestamps.
+Import sequelize from `configs/sequelize`.
 
-`click_count` is a denormalized counter on `links` — incremented async per redirect. The `clicks`
-table is the full event log used only by analytics endpoints.
+`click_count` is a denormalized counter on `links` — incremented async per redirect via
+`linkRepository.incrementClickCount`. The `clicks` table is the full event log for analytics only.
 
 ---
 
@@ -227,7 +242,8 @@ Required log fields per event:
 Extend `AppError`. Classes: `BadRequest` (400), `NotFound` (404), `Conflict` (409), `Gone` (410),
 `UnprocessableEntity` (422), `TooManyRequests` (429).
 
-When adding a new class → add matching `instanceof` branch in `errorHandler.js`.
+When adding a new class → add matching `instanceof` branch in `exceptionHandler` inside
+`utils/exceptions/exception-handler.js`.
 
 ---
 
@@ -255,10 +271,13 @@ When adding a new class → add matching `instanceof` branch in `errorHandler.js
 - Never write to Redis at link creation time.
 - Never `await` analytics writes (click event, `click_count`) inside the redirect response.
 - Never read `process.env` outside `src/configs/env.js`.
-- Never call `redis.*` outside `src/utils/cacheService.js`.
-- Never call `nanoid` outside `src/utils/codeGenerator.js`.
+- Never call `redis.*` outside `src/utils/cache-service.js`.
+- Never call `nanoid` outside `src/utils/code-generator.js`.
+- Never query a Sequelize model directly from a controller, middleware, or utility — use repositories.
+- Never destructure a repository import — always call through the namespace object.
+- Never call a serializer from anywhere other than a controller.
 - Never use `pino` — use `winston`.
-- Never use `express-validator` — use `joi`.
+- Never use `express-validator` — use `joi` via `handleBadRequests` in `links-middlewares.js`.
 - Never return HTML from `GET /:code` error paths — always JSON.
 - Never register `/:code` before `/health` or `/api/*`.
 - Never skip the `expiresAt` check on a Redis cache hit.
