@@ -1,5 +1,5 @@
 const { createLogger, format, transports } = require('winston');
-const config = require('./config');
+const config = require('../configs/config');
 
 const logger = createLogger({
     level: config.app.LOG_LEVEL,
