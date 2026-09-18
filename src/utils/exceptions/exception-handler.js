@@ -1,4 +1,3 @@
-const config = require('../../configs/config');
 const logger = require('../../configs/logger');
 const { BadRequest } = require('./custom-exceptions');
 const { validationResult } = require('express-validator');
@@ -17,9 +16,9 @@ const exceptionHandler = (err, req, res, next) => {
     const isOperational = err.isOperational || false;
 
     if (isOperational) {
-        logger.warn({ statusCode, error: err.message, path: req.path }, 'Operational error');
+        logger.warn('Operational error', { statusCode, error: err.message, path: req.path });
     } else {
-        logger.error({ statusCode, error: err.message, stack: err.stack, path: req.path }, 'Unexpected error');
+        logger.error('Unexpected error', { statusCode, error: err.message, stack: err.stack, path: req.path });
     }
 
     res.status(statusCode).json({
