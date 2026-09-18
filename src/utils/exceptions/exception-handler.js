@@ -1,7 +1,7 @@
 const config = require('../../configs/config');
+const logger = require('../../configs/logger');
 const { BadRequest } = require('./custom-exceptions');
 const { validationResult } = require('express-validator');
-const logger = require('pino')({ level: config.app.LOG_LEVEL });
 
 const handleBadRequests = (errorMessage) => (req, res, next) => {
     const errors = validationResult(req);
