@@ -1,4 +1,4 @@
-const logger = require('../../configs/logger');
+const logger = require('../logger');
 const { BadRequest } = require('./custom-exceptions');
 const { validationResult } = require('express-validator');
 
