@@ -1,10 +1,10 @@
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
 const appConfig = require('../configs/config');
+const logger = require('../utils/logger');
 
 const env = process.env.NODE_ENV || 'development';
 const config = appConfig[env];
-const logger = require('./logger');
 
 if (!config) throw new Error(`No configuration found for environment: ${env}`);
 if (!config.database || !config.username || !config.password || !config.host)
