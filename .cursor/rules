@@ -1,0 +1,266 @@
+# Cursor Rules — url-shortener
+
+## Project Identity
+
+URL Shortener v1 — Node.js / Express / PostgreSQL / Redis. RESTful service: shorten URLs, redirect,
+record click analytics. Primary architectural lesson: Redis cache-aside pattern on a read-heavy
+redirect workload.
+
+---
+
+## Tech Stack
+
+- **Runtime:** Node.js ≥ 20 LTS
+- **Framework:** Express.js + `express-async-errors`
+- **ORM:** Sequelize v6 + `sequelize-cli` (migrations only)
+- **Cache / rate-limit store:** Redis 7 via `ioredis`
+- **Short codes:** `nanoid` (7-char, URL-safe)
+- **Validation:** `joi` — NOT `express-validator` (remove it)
+- **Rate limiting:** `express-rate-limit` + `rate-limit-redis`
+- **Logging:** `winston` — NOT `pino` (remove it)
+- **Security:** `helmet`, `cors`
+- **API docs:** `swagger-jsdoc` + `swagger-ui-express` at `/api/v1/docs`
+- **Testing:** Jest + Supertest
+- **Config:** `dotenv` → `src/configs/env.js` (all `process.env` reads live here only)
+
+No auth, no sessions, no JWT. All links are anonymous in v1.
+
+---
+
+## Folder Structure (follow exactly)
+
+```
+src/
+  index.js               # Entry point — middleware, route registration, server start
+  configs/
+    config.js            # Sequelize dialect configs + app config object
+    env.js               # Validated env vars — single source of process.env truth
+    database.js          # Sequelize instance
+    redis.js             # ioredis client with reconnect handling
+  middleware/
+    validate.js          # Joi validation middleware factory
+    rateLimiter.js       # express-rate-limit + rate-limit-redis (POST /api/v1/links only)
+    errorHandler.js      # Global Express error handler (registered last in index.js)
+  modules/
+    links/
+      links.routes.js
+      links.controller.js
+      links.service.js
+      links.validation.js  # Joi schemas for POST and PATCH
+    redirect/
+      redirect.routes.js
+      redirect.controller.js
+      redirect.service.js  # Cache-aside logic + async click write
+    stats/
+      stats.routes.js
+      stats.controller.js
+  models/
+    Link.js
+    Click.js
+  migrations/
+  utils/
+    codeGenerator.js     # nanoid + collision check + retry loop
+    cacheService.js      # Redis wrappers: getLink, setLink, deleteLink
+    response.js          # Builds { code, status, message, data }
+    logger.js            # Shared winston logger instance
+    exceptions/
+      custom-exceptions.js
+      exception-handler.js  # DEPRECATED — keep file, move logic to middleware/errorHandler.js
+  tests/
+    setup.js
+    teardown.js
+    setupFilesAfterEnv.js
+    unit/
+      codeGenerator.test.js
+    integration/
+      links.test.js
+      redirect.test.js
+      stats.test.js
+      health.test.js
+```
+
+> The project uses `src/configs/` (plural). Do not rename it to `src/config/`.
+
+---
+
+## Architecture Rules
+
+1. **Redirect path is the critical path.** Target: < 5ms cache hit, < 50ms cache miss. No blocking
+   work happens after `res.redirect()` is called.
+
+2. **Cache-aside only.** Never write to Redis when creating a link. Populate on first redirect only
+   (cache miss → DB → write to Redis → redirect).
+
+3. **Async analytics after redirect.** Click events and `click_count` increments are fire-and-forget.
+   Use `setImmediate(() => { ... })`. Never `await` these. Log errors but never propagate them.
+
+4. **`cacheService.js` owns all Redis calls.** `getLink(code)`, `setLink(code, data)`,
+   `deleteLink(code)` are the only functions that use the ioredis client directly. Nothing else calls
+   `redis.get/set/del`.
+
+5. **`codeGenerator.js` has no Express dependency.** It generates a nanoid code, checks the DB for
+   collision, retries up to `CODE_MAX_RETRIES`. Unit-testable in isolation.
+
+6. **Thin controllers.** Controllers: validate → call service → `res.json()`. No DB queries,
+   no cache calls, no nanoid in controllers.
+
+7. **Validation middleware only.** Joi schemas live in `links.validation.js`. The `validate.js`
+   factory applies them. Controllers never validate manually.
+
+8. **`errorHandler.js` is last.** Registered as the final middleware in `src/index.js`. Controllers
+   call `next(error)` — never `res.json()` error payloads directly.
+
+9. **`env.js` is the only file that reads `process.env`.** All other files import from `env.js`.
+
+10. **Soft deletes.** `DELETE` sets `deleted_at`. List queries and redirect lookup filter
+    `deleted_at IS NULL`.
+
+11. **Route order matters.** Register routes: `/health` → `/api/v1/` → `/:code` (last). The
+    wildcard `/:code` must never be registered before `/health` or `/api/*`.
+
+---
+
+## Redis Key Schema
+
+| Key | Value | TTL | Purpose |
+| --- | --- | --- | --- |
+| `link:{code}` | JSON `{ originalUrl, redirectType, expiresAt }` | 86 400 s (24 h) | Redirect cache |
+| `rl:create:{ip}` | Integer counter | 60 s | Rate limiter for `POST /api/v1/links` |
+
+**Redis TTL ≠ link expiry.** Always check `expiresAt` from the cached JSON on a cache hit. An
+expired link returns 410 even if its Redis entry is still live.
+
+**Cache invalidation triggers:**
+- `PATCH` (URL or `redirectType` changed) → `cacheService.deleteLink(code)`
+- `DELETE` (soft delete) → `cacheService.deleteLink(code)`
+- Expired link detected at redirect time → `cacheService.deleteLink(code)` → return 410
+
+**Redis unavailable — fail gracefully:**
+- Redirect: falls back to PostgreSQL directly.
+- Rate limiting: bypassed (fail-open), log `warn`.
+- Cache writes: skipped silently.
+- `/health`: reports Redis as `"degraded"`, returns 200 (not 503).
+
+---
+
+## Response Envelope (all responses)
+
+```json
+{ "code": <HTTP status>, "status": "success" | "error", "message": "...", "data": { ... } }
+```
+
+- 422 → `data.errors`: `[{ field, message }]`
+- 429 → `data.retryAfter`: seconds
+- All other errors → `data: {}`
+- `GET /:code` errors (404, 410, 500) return JSON — never HTML.
+
+---
+
+## HTTP Status Codes
+
+| Code | When |
+| --- | --- |
+| 200 | Successful GET |
+| 201 | `POST /api/v1/links` created |
+| 204 | `DELETE /api/v1/links/:code` |
+| 301/302 | Redirect (based on `link.redirect_type`) |
+| 400 | Malformed JSON body |
+| 404 | Code not found or soft-deleted |
+| 409 | Duplicate alias/code |
+| 410 | Link has expired |
+| 422 | Joi validation failed |
+| 429 | Rate limit exceeded |
+| 500 | Unexpected — no stack traces in response |
+| 503 | `/health` when DB or Redis is down |
+
+---
+
+## Validation (Joi)
+
+**POST /api/v1/links:**
+- `url`: required, absolute URL, `http/https` only, max 2 048 chars, not pointing to itself.
+- `alias`: optional, 3–20 chars, `/^[a-zA-Z0-9_-]+$/`, not a reserved path.
+- `ttlDays`: optional, integer 1–365. Converts to `expiresAt = now() + N days`.
+- `redirectType`: optional, `301` or `302`. Default: `302`.
+
+**PATCH /api/v1/links/:code:**
+- Same rules as POST for each field. Empty body → 422.
+- Changing `url` or `redirectType` → invalidate Redis cache entry.
+
+**GET /api/v1/links query params:**
+- `page`, `limit` (1–100), `sort` (created_at|click_count|expires_at), `order` (asc|desc),
+  `includeExpired` (bool), `includeDeleted` (bool).
+
+---
+
+## Models — use `sequelize.define(...)`, not class pattern
+
+**Link fields:** `id` (UUID PK), `code` (VARCHAR 20, UNIQUE), `originalUrl` (TEXT), `redirectType`
+(SMALLINT, default 302), `clickCount` (BIGINT, default 0), `expiresAt` (DATE, nullable),
+`deletedAt` (DATE, nullable), `createdAt`, `updatedAt`.
+
+**Click fields:** `id` (UUID PK), `linkId` (UUID FK → links.id), `clickedAt` (DATE), `ipAddress`
+(INET, nullable), `userAgent` (TEXT, nullable), `referrer` (TEXT, nullable). No Sequelize timestamps.
+
+`click_count` is a denormalized counter on `links` — incremented async per redirect. The `clicks`
+table is the full event log used only by analytics endpoints.
+
+---
+
+## Logging (Winston)
+
+Shared logger in `src/utils/logger.js`. Import it everywhere. Never use `console.log` in production.
+
+Required log fields per event:
+- Every redirect: `code`, `cacheHit` (bool), `responseTime`.
+- Cache invalidation: `code`, `reason`.
+- Rate limit hit: `ip`.
+- Async write failure: `linkId`, `error`.
+- Redis degraded: `error`.
+- Operational errors (4xx): `statusCode`, `error`, `path`.
+- Unexpected errors (5xx): `statusCode`, `error`, `stack`, `path`.
+
+---
+
+## Custom Exceptions
+
+Extend `AppError`. Classes: `BadRequest` (400), `NotFound` (404), `Conflict` (409), `Gone` (410),
+`UnprocessableEntity` (422), `TooManyRequests` (429).
+
+When adding a new class → add matching `instanceof` branch in `errorHandler.js`.
+
+---
+
+## Testing
+
+- Unit tests: mock the DB call in `codeGenerator.test.js`. No other units needed.
+- Integration tests: real test DB + real Redis (Docker Compose test profile). No mocks.
+- `setup.js`: `NODE_ENV=test npx sequelize-cli db:migrate` (env is mandatory).
+- `setupFilesAfterEnv.js`: close Sequelize + ioredis after each file (prevents Jest from hanging).
+- Coverage target: ≥ 80% statement coverage.
+
+---
+
+## Conventions
+
+- `sequelize-cli` migrations only — never `sync({ force: true })`.
+- Conventional Commits: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`.
+- No comments explaining what code does — only write a comment when the *why* is non-obvious.
+- No auth middleware anywhere — v1 is fully open.
+
+---
+
+## Hard Rules (never violate)
+
+- Never write to Redis at link creation time.
+- Never `await` analytics writes (click event, `click_count`) inside the redirect response.
+- Never read `process.env` outside `src/configs/env.js`.
+- Never call `redis.*` outside `src/utils/cacheService.js`.
+- Never call `nanoid` outside `src/utils/codeGenerator.js`.
+- Never use `pino` — use `winston`.
+- Never use `express-validator` — use `joi`.
+- Never return HTML from `GET /:code` error paths — always JSON.
+- Never register `/:code` before `/health` or `/api/*`.
+- Never skip the `expiresAt` check on a Redis cache hit.
+- Never expose stack traces in API responses.
+- Never cache stats query results in Redis — analytics reads go to PostgreSQL directly.
