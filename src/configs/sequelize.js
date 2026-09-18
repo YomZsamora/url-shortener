@@ -4,7 +4,7 @@ const appConfig = require('../configs/config');
 
 const env = process.env.NODE_ENV || 'development';
 const config = appConfig[env];
-const logger = require('pino')({ level: appConfig.app.LOG_LEVEL });
+const logger = require('./logger');
 
 if (!config) throw new Error(`No configuration found for environment: ${env}`);
 if (!config.database || !config.username || !config.password || !config.host)
@@ -19,6 +19,6 @@ const sequelize = new Sequelize(config.database, config.username, config.passwor
 sequelize
     .authenticate()
     .then(() => logger.info('Database connected successfully'))
-    .catch((err) => logger.error({ error: err.message }, 'Database connection error'));
+    .catch((err) => logger.error('Database connection error', { error: err.message }));
 
 module.exports = sequelize;
