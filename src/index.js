@@ -1,7 +1,7 @@
 require('dotenv').config();
 require('./configs/sequelize');
 const express = require('express');
-const logger = require('./configs/logger');
+const logger = require('./utils/logger');
 const { exceptionHandler } = require('./utils/exceptions/exception-handler');
 
 const app = express();
