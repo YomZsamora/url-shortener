@@ -45,9 +45,9 @@
     "ioredis": "^5.11.1",
     "pg": "^8.22.0",
     "pg-hstore": "^2.3.4",
-    "pino": "^9.3.2",
     "sequelize": "^6.37.8",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "winston": "^3.19.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
