@@ -1,12 +1,17 @@
 require('dotenv').config();
+const cors = require('cors');
 require('./configs/sequelize');
+const helmet = require('helmet');
 const express = require('express');
 const logger = require('./utils/logger');
+const config = require('./configs/config');
 const { exceptionHandler } = require('./utils/exceptions/exception-handler');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = config.app.PORT;
 
+app.use(helmet());
+app.use(cors());
 app.use(express.json());
 
 
