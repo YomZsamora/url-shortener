@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+
+  url-shortener:
+    build: .
+    command: sh -c "npm run dev"
+    ports:
+      - "3038:3001"
+    env_file:
+      - ./.env
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+    networks:
+      - dev-infra
+
+networks:
+  dev-infra:
+    external: true
+    
