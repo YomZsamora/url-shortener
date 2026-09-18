@@ -1,17 +1,18 @@
 const logger = require('../logger');
-const { BadRequest } = require('./custom-exceptions');
-const { validationResult } = require('express-validator');
+const { UnprocessableEntity } = require('./custom-exceptions');
 
-const handleBadRequests = (errorMessage) => (req, res, next) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return next(new BadRequest(errorMessage || errors.array()[0].msg));
+const handleBadRequests = (schema, target = 'body') => (req, res, next) => {
+    const { error, value } = schema.validate(req[target], { abortEarly: false, stripUnknown: true });
+    if (error) {
+        const errors = error.details.map(d => ({ field: d.path.join('.'), message: d.message }));
+        return next(new UnprocessableEntity('Validation failed.', errors));
     }
+    req[target] = value;
     next();
 };
 
 const exceptionHandler = (err, req, res, next) => {
-
+    
     const statusCode = err.statusCode || 500;
     const isOperational = err.isOperational || false;
 
@@ -21,10 +22,15 @@ const exceptionHandler = (err, req, res, next) => {
         logger.error('Unexpected error', { statusCode, error: err.message, stack: err.stack, path: req.path });
     }
 
+    let data = {};
+    if (err.errors) data = { errors: err.errors };
+    else if (err.retryAfter != null) data = { retryAfter: err.retryAfter };
+
     res.status(statusCode).json({
+        code: statusCode,
         status: 'error',
-        message: isOperational ? err.message : 'An unexpected error occurred',
-        data: null,
+        message: isOperational ? err.message : 'An unexpected error occurred.',
+        data,
     });
 };
 
