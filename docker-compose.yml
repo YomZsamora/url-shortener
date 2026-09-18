@@ -6,7 +6,7 @@ services:
     build: .
     command: sh -c "npm run dev"
     ports:
-      - "3038:3001"
+      - "3038:3000"
     env_file:
       - ./.env
     volumes:
