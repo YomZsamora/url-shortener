@@ -25,9 +25,32 @@ class Conflict extends AppError {
     }
 }
 
-module.exports = { 
-    AppError, 
-    BadRequest, 
-    NotFound, 
-    Conflict 
+class Gone extends AppError {
+    constructor(message = 'This link has expired and is no longer active.') {
+        super(message, 410);
+    }
+}
+
+class UnprocessableEntity extends AppError {
+    constructor(message = 'Validation failed.', errors = []) {
+        super(message, 422);
+        this.errors = errors;
+    }
+}
+
+class TooManyRequests extends AppError {
+    constructor(message = 'Too many requests.', retryAfter = null) {
+        super(message, 429);
+        this.retryAfter = retryAfter;
+    }
+}
+
+module.exports = {
+    AppError,
+    BadRequest,
+    NotFound,
+    Conflict,
+    Gone,
+    UnprocessableEntity,
+    TooManyRequests,
 };
