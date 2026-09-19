@@ -7,6 +7,7 @@ const logger = require('./utils/logger');
 const config = require('./configs/config');
 const linksRouter  = require('./app/routes/links-routes');
 const healthRouter = require('./app/routes/health-routes');
+const redirectRouter = require('./app/routes/redirect-routes');
 const { exceptionHandler } = require('./utils/exceptions/exception-handler');
 
 const app = express();
@@ -18,6 +19,7 @@ app.use(express.json());
 
 app.use('/health', healthRouter);
 app.use('/api/v1/links', linksRouter);
+app.use('/', redirectRouter);
 
 app.use(exceptionHandler);
 
