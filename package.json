@@ -7,7 +7,7 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "migrate": "npx sequelize-cli db:migrate",
-    "test": "NODE_ENV=test jest --forceExit",
+    "test": "NODE_ENV=test jest --runInBand --forceExit",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format:check": "prettier --check src/",
