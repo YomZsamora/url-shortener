@@ -1,5 +1,6 @@
 const request = require('supertest');
 const app = require('../../index');
+const { faker } = require('@faker-js/faker');
 const redis = require('../../configs/redis');
 const sequelize = require('../../configs/sequelize');
 const config = require('../../configs/config');
@@ -14,7 +15,7 @@ describe('POST /api/v1/links', () => {
     it('returns 201 with a short URL for a valid request', async () => {
         const res = await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com' });
+            .send({ url: faker.internet.url() });
             
         expect(res.status).toBe(201);
         expect(res.body.status).toBe('success');
@@ -28,7 +29,7 @@ describe('POST /api/v1/links', () => {
     it('returns 201 with a custom alias', async () => {
         const res = await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com', alias: 'my-link' });
+            .send({ url: faker.internet.url(), alias: 'my-link' });
         
         expect(res.status).toBe(201);
         expect(res.body.status).toBe('success');
@@ -40,7 +41,7 @@ describe('POST /api/v1/links', () => {
     it('returns 201 with ttlDays and a correct expiresAt', async () => {
         const res = await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com', ttlDays: 7 });
+            .send({ url: faker.internet.url(), ttlDays: 7 });
 
         expect(res.status).toBe(201);
         expect(res.body.status).toBe('success');
@@ -52,7 +53,7 @@ describe('POST /api/v1/links', () => {
     it('returns 201 with redirectType 301', async () => {
         const res = await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com', redirectType: 301 });
+            .send({ url: faker.internet.url(), redirectType: 301 });
 
         expect(res.status).toBe(201);
         expect(res.body.status).toBe('success');
@@ -64,10 +65,10 @@ describe('POST /api/v1/links', () => {
     it('returns 409 for a duplicate custom alias', async () => {
         await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com', alias: 'taken' });
+            .send({ url: faker.internet.url(), alias: 'taken' });
         const res = await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com', alias: 'taken' });
+            .send({ url: faker.internet.url(), alias: 'taken' });
         
         expect(res.status).toBe(409);
         expect(res.body.status).toBe('error');
@@ -95,14 +96,14 @@ describe('POST /api/v1/links', () => {
     it('returns 422 for an alias with invalid characters', async () => {
         const res = await request(app)
             .post('/api/v1/links')
-            .send({ url: 'https://www.example.com', alias: 'bad alias!' });
+            .send({ url: faker.internet.url(), alias: 'bad alias!' });
 
         expect(res.status).toBe(422);
         expect(res.body.data.errors[0].field).toBe('alias');
     });
 
     it('returns 429 after exceeding the rate limit', async () => {
-        const payload = { url: 'https://www.example.com' };
+        const payload = { url: faker.internet.url() };
         for (let i = 0; i < 10; i++) {
             await request(app).post('/api/v1/links').send(payload);
         }
