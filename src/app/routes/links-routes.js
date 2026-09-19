@@ -6,6 +6,7 @@ const {
     updateLink,
     deleteLink,
 } = require('../controllers/links-controller');
+const { getLinkStats } = require('../controllers/stats-controller');
 const {
     createLinkMiddlewares,
     updateLinkMiddlewares,
@@ -16,6 +17,7 @@ const router = Router();
 
 router.get('/', listLinksMiddlewares, listLinks);
 router.post('/', createLinkMiddlewares, createLink);
+router.get('/:code/stats', getLinkStats);
 router.get('/:code', getLink);
 router.patch('/:code', updateLinkMiddlewares, updateLink);
 router.delete('/:code', deleteLink);
