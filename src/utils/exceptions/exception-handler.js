@@ -8,6 +8,8 @@ const handleBadRequests = (schema, target = 'body') => (req, res, next) => {
         return next(new UnprocessableEntity('Validation failed.', errors));
     }
     req[target] = value;
+    req.valid = req.valid || {};
+    req.valid[target] = value;
     next();
 };
 
