@@ -21,7 +21,8 @@ const urlField = Joi.string()
 const createLinkSchema = Joi.object({
     url: urlField.required(),
     alias: Joi.string()
-        .min(3).max(20)
+        .min(3)
+        .max(20)
         .pattern(/^[a-zA-Z0-9_-]+$/)
         .custom((value, helpers) => {
             if (RESERVED_PATHS.includes(value.toLowerCase())) {
@@ -31,7 +32,8 @@ const createLinkSchema = Joi.object({
         })
         .optional()
         .messages({
-            'string.pattern.base': '"alias" may only contain letters, numbers, hyphens, and underscores.',
+            'string.pattern.base':
+                '"alias" may only contain letters, numbers, hyphens, and underscores.',
             'any.invalid': '"alias" uses a reserved path.',
         }),
     ttlDays: Joi.number().integer().min(1).max(365).optional(),
@@ -40,14 +42,13 @@ const createLinkSchema = Joi.object({
 
 const updateLinkSchema = Joi.object({
     url: urlField.optional(),
-    ttlDays: Joi.alternatives().try(
-        Joi.number().integer().min(1).max(365),
-        Joi.valid(null)
-    ).optional(),
+    ttlDays: Joi.alternatives()
+        .try(Joi.number().integer().min(1).max(365), Joi.valid(null))
+        .optional(),
     redirectType: Joi.number().valid(301, 302).optional(),
-}).min(1).messages({
-    'object.min': 'At least one field must be provided.',
-});
+})
+    .min(1)
+    .messages({ 'object.min': 'At least one field must be provided.' });
 
 const listLinksSchema = Joi.object({
     page: Joi.number().integer().min(1).default(1),
