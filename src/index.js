@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const express = require('express');
 const logger = require('./utils/logger');
 const config = require('./configs/config');
+const linksRouter  = require('./app/routes/links-routes');
 const healthRouter = require('./app/routes/health-routes');
 const { exceptionHandler } = require('./utils/exceptions/exception-handler');
 
@@ -16,6 +17,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/health', healthRouter);
+app.use('/api/v1/links', linksRouter);
 
 app.use(exceptionHandler);
 
