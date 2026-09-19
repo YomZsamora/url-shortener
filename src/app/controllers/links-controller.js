@@ -1,10 +1,13 @@
 const { ApiResponse } = require('../../utils/responses');
+const cacheService = require('../../services/cache-service');
 const linkRepository = require('../../repositories/link-repository');
 const { generateUniqueCode } = require('../../utils/code-generator');
 const linkSerializer = require('../../utils/serializers/link-serializer');
+const logger = require('../../utils/logger');
 const { Conflict, NotFound } = require('../../utils/exceptions/custom-exceptions');
 
 const createLink = async (req, res) => {
+
     const { url, alias, ttlDays, redirectType } = req.body;
 
     const code = alias ?? (await generateUniqueCode());
@@ -22,7 +25,9 @@ const createLink = async (req, res) => {
 };
 
 const listLinks = async (req, res) => {
+
     const { page, limit, sort, order, includeExpired, includeDeleted } = req.valid.query;
+
     const { count, rows } = await linkRepository.findAll({
         limit,
         offset: (page - 1) * limit,
@@ -40,6 +45,7 @@ const listLinks = async (req, res) => {
 };
 
 const getLink = async (req, res) => {
+    
     const link = await linkRepository.findByCode(req.params.code);
     if (!link) throw new NotFound('Link not found.');
     res.status(200).json(
@@ -50,6 +56,7 @@ const getLink = async (req, res) => {
 };
 
 const updateLink = async (req, res) => {
+
     const { url, ttlDays, redirectType } = req.body;
 
     const link = await linkRepository.findByCode(req.params.code);
@@ -64,6 +71,8 @@ const updateLink = async (req, res) => {
     }
 
     const [, updatedRows] = await linkRepository.update(req.params.code, updates);
+    await cacheService.deleteLink(req.params.code);
+    logger.info('Cache invalidated', { code: req.params.code, reason: 'update' });
 
     res.status(200).json(
         new ApiResponse(200, 'Link updated successfully.', {
@@ -76,6 +85,8 @@ const deleteLink = async (req, res) => {
     const link = await linkRepository.findByCode(req.params.code);
     if (!link) throw new NotFound('Link not found.');
     await linkRepository.softDelete(req.params.code);
+    await cacheService.deleteLink(req.params.code);
+    logger.info('Cache invalidated', { code: req.params.code, reason: 'delete' });
     res.status(204).send();
 };
 
