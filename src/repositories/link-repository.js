@@ -23,4 +23,17 @@ const findAll = ({ limit, offset, order, includeExpired, includeDeleted }) => {
     return Link.findAndCountAll({ where, limit, offset, order });
 };
 
-module.exports = { findByCode, create, update, softDelete, incrementClickCount, findAll };
+const getSummary = async () => {
+    const now = new Date();
+    const totalLinks = await Link.count({ where: { deletedAt: null } });
+    const activeLinks = await Link.count({
+        where: {
+            deletedAt: null,
+            [Op.or]: [{ expiresAt: null }, { expiresAt: { [Op.gt]: now } }],
+        },
+    });
+    const totalClicks = (await Link.sum('clickCount', { where: { deletedAt: null } })) || 0;
+    return { totalLinks, activeLinks, totalClicks };
+};
+
+module.exports = { findByCode, create, update, softDelete, incrementClickCount, findAll, getSummary };
