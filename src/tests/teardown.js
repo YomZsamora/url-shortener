@@ -12,6 +12,10 @@ module.exports = async () => {
 
     await client.connect();
     const dbName = process.env.POSTGRES_DATABASE_TEST;
+    await client.query(
+        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
+        [dbName]
+    );
     await client.query(`DROP DATABASE IF EXISTS "${dbName}"`);
     await client.end();
 };
