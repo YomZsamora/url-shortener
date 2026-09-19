@@ -1,3 +1,4 @@
+const rateLimiter = require('./rate-limiter');
 const { handleBadRequests } = require('../../utils/exceptions/exception-handler');
 const {
     createLinkSchema,
@@ -5,7 +6,7 @@ const {
     listLinksSchema,
 } = require('../../utils/validators/link-validators');
 
-const createLinkMiddlewares = [handleBadRequests(createLinkSchema)];
+const createLinkMiddlewares = [handleBadRequests(createLinkSchema), rateLimiter];
 const updateLinkMiddlewares = [handleBadRequests(updateLinkSchema)];
 const listLinksMiddlewares = [handleBadRequests(listLinksSchema, 'query')];
 
